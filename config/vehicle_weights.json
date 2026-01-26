@@ -1,0 +1,19 @@
+{
+  "vehicle_weights": {
+    "Hatchback": 1.0,
+    "Sedan": 1.1,
+    "SUV": 1.4,
+    "MUV": 1.5,
+    "Bus": 3.0,
+    "Truck": 2.8,
+    "Three-Wheeler": 0.6,
+    "Two-Wheeler": 0.4,
+    "LCV": 1.8,
+    "Mini-bus": 2.2,
+    "Tempo-traveller": 2.0,
+    "Bicycle": 0.2,
+    "Van": 1.6
+  },
+  "description": "Weight factors for different vehicle types based on road occupancy impact. Higher weights indicate larger road space consumption.",
+  "baseline": "Hatchback is the baseline (1.0). Weights are relative to typical hatchback dimensions."
+}

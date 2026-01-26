@@ -1,0 +1,18 @@
+
+# Data
+data/
+*.mp4
+*.pt
+*.json
+*.csv
+*.png
+!config/*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
