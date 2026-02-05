@@ -4,6 +4,7 @@ import time
 import pandas as pd
 import sys
 from pathlib import Path
+import altair as alt
 
 # Add src to path to import modules
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
@@ -17,46 +18,66 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize Session State for Simulation
+# Initialize Session State
 if 'junction' not in st.session_state:
     st.session_state.junction = JunctionManager()
-    st.session_state.simulation_time = 0.0
 
 junction = st.session_state.junction
 
-# Sidebar Controls
+# ==============================================================================
+# 1. Sidebar Controls (Configurability)
+# ==============================================================================
 st.sidebar.header("🔬 Lab Controls")
-st.sidebar.markdown("Stochastic Parameters")
 
-# Allow adjusting arrival rates on the fly
+st.sidebar.subheader("Stochastic Parameters")
+# Arrival Rates
 for lane_id in junction.lanes:
     rate = st.sidebar.slider(
         f"Arrival Rate ({lane_id}) λ", 
-        min_value=0.0, 
-        max_value=30.0, 
+        min_value=0.0, max_value=30.0, step=0.5,
         value=float(junction.lanes[lane_id].arrival_rate),
-        step=0.5,
         help="Vehicles per minute (Poisson)"
     )
     junction.lanes[lane_id].arrival_rate = rate
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("Logic Thresholds")
+# Update Junction Config dynamically
+min_green = st.sidebar.slider("Min Green Time (s)", 1.0, 15.0, junction.config["min_green_time"])
+max_green = st.sidebar.slider("Max Green Time (s)", 10.0, 60.0, junction.config["max_green_time"])
+queue_thresh = st.sidebar.slider("Queue Threshold", 5, 40, junction.config["queue_threshold"])
+wait_thresh = st.sidebar.slider("Max Wait Time (s)", 20.0, 90.0, junction.config["max_wait_time"])
+
+# Apply Config Updates
+junction.config.update({
+    "min_green_time": min_green,
+    "max_green_time": max_green,
+    "queue_threshold": queue_thresh,
+    "max_wait_time": wait_thresh
+})
+
+st.sidebar.markdown("---")
 simulation_speed = st.sidebar.slider("Simulation Speed", 0.5, 5.0, 1.0)
 auto_refresh = st.sidebar.checkbox("Run Simulation", value=True)
 
-# Main Dashboard
-st.title("🚦 Discrete Event Traffic Management System")
-st.markdown(f"**Grid ID:** G-YEL-001 | **Location:** NMIT Junction | **Algorithm:** Queue-Based Adaptive Control")
 
-# 1. Top Row: Metrics
+# ==============================================================================
+# 2. Main Dashboard Header
+# ==============================================================================
+st.title("🚦 Discrete Event Traffic Management System")
+st.markdown(f"**Grid ID:** G-YEL-001 | **Algorithm:** Weighted Priority (Queue + Wait Time)")
+
+# Metrics Row
 col1, col2, col3, col4 = st.columns(4)
 
 active_lane = junction.active_lane_id
 active_color = "normal" if junction.lanes[active_lane].queue_length < 20 else "inverse"
+green_duration = junction.sim_time - junction.last_switch_time
 
 with col1:
     st.metric("Active Lane (Green)", active_lane, delta="Priority", delta_color=active_color)
 with col2:
-    st.metric("Green Timer", f"{time.time() - junction.last_switch_time:.1f}s")
+    st.metric("Green Timer", f"{green_duration:.1f}s")
 with col3:
     total_q = sum(l.queue_length for l in junction.lanes.values())
     st.metric("Total Congestion", int(total_q), delta=f"{int(total_q/4)} avg/lane")
@@ -64,57 +85,55 @@ with col4:
     last_event = junction.events_log[-1]['event'] if junction.events_log else "None"
     st.metric("Last Discrete Event", last_event)
 
-# 2. Main Visualization: Lane Queues
-st.subheader("real-time Traffic Queue Status (Stochastic + Discrete Event)")
 
-# Step Simulation (if running)
-# Simulation logic moved to end of file
+# ==============================================================================
+# 3. Visualization (Charts & Stats)
+# ==============================================================================
 
-# Data for Chart
-chart_data = []
-for lane_id, lane in junction.lanes.items():
-    chart_data.append({
-        "Lane": lane_id,
-        "Queue Length": lane.queue_length,
-        "Status": "Green" if lane_id == active_lane else "Red",
-        "Color": "#00CC00" if lane_id == active_lane else "#FF0000"
+# Prepare Data
+lane_data = []
+for lid, lane in junction.lanes.items():
+    stats = lane.process_traffic(0) # Logic hack: get stats without discharging? No, simulator handles discharge in step.
+    # We access properties directly
+    lane_data.append({
+        "Lane": lid,
+        "Queue": lane.queue_length,
+        "Status": "Active" if lid == active_lane else "Waiting",
+        "Wait Time": round(junction.sim_time - junction.lane_last_green_times[lid], 1) if lid != active_lane else 0,
+        "Passed": lane.vehicles_passed
     })
+df_lanes = pd.DataFrame(lane_data)
 
-df_chart = pd.DataFrame(chart_data)
+# Row 1: Queue Chart (Altair)
+st.subheader("Real-time Queue Status")
+chart = alt.Chart(df_lanes).mark_bar().encode(
+    x=alt.X('Lane', axis=alt.Axis(labelAngle=0)),
+    y='Queue',
+    color=alt.Color('Status', scale=alt.Scale(domain=['Active', 'Waiting'], range=['#2ecc71', '#e74c3c'])),
+    tooltip=['Lane', 'Queue', 'Wait Time']
+).properties(height=300)
 
-# Custom Bar Chart using columns for custom styling
-cols = st.columns(4)
-for i, (index, row) in enumerate(df_chart.iterrows()):
-    with cols[i]:
-        st.markdown(f"### {row['Lane']}")
-        if row['Status'] == 'Green':
-            st.success(f"🟢 ACTIVE ({int(row['Queue Length'])})")
-        else:
-            st.error(f"🔴 WAITING ({int(row['Queue Length'])})")
-        st.progress(min(row['Queue Length'] / 50.0, 1.0))
+st.altair_chart(chart, use_container_width=True)
 
-# 3. Discrete Event Log
-st.subheader("📜 System Event Log (Discrete Event Logic)")
-st.markdown("Logs state transitions triggered by queue thresholds.")
+# Row 2: Throughput & Logic Log
+c1, c2 = st.columns([1, 2])
 
-if junction.events_log:
-    log_df = pd.DataFrame(junction.events_log)
-    st.dataframe(log_df.iloc[::-1], use_container_width=True) # Show latest first
-else:
-    st.info("No switching events triggered yet.")
+with c1:
+    st.subheader("Throughput Stats")
+    st.dataframe(df_lanes[["Lane", "Passed", "Wait Time"]], hide_index=True)
 
-# 4. Stochastic Analysis View
-st.subheader("📈 Stochastic Distribution Analysis")
-st.markdown("Real-time view of Poisson arrival process.")
-raw_json = {l: int(junction.lanes[l].vehicles_passed) for l in junction.lanes}
-st.json(raw_json)
+with c2:
+    st.subheader("System Event Log")
+    if junction.events_log:
+        log_df = pd.DataFrame(junction.events_log)
+        st.dataframe(log_df.iloc[::-1].head(10), use_container_width=True) # Show latest 10
+    else:
+        st.info("No switching events triggered yet.")
 
-# Footer
-st.markdown("---")
-st.markdown("*Project: Grid-Based Intelligent Traffic Management | Dept: ISE & Planning, NMIT*")
-
-# Step Simulation (if running) - Moved to end to ensure UI updates first
+# ==============================================================================
+# 4. Simulation Loop (At End)
+# ==============================================================================
 if auto_refresh:
-    step_result = junction.step(dt=1.0 * simulation_speed)
-    time.sleep(1.0 / simulation_speed) # Control visual update rate
+    junction.step(dt=1.0 * simulation_speed)
+    time.sleep(1.0 / simulation_speed)
     st.rerun()

@@ -5,67 +5,120 @@ from typing import Dict, List, Optional
 
 class TrafficSimulator:
     """
-    Stochastic Traffic Simulator using Poisson Distribution
-    Simulates a single lane/path of traffic.
+    Stochastic Traffic Simulator using Poisson Distribution and Rich Vehicle Objects.
+    
+    Improvements:
+    - Simulation Clock (sim_time)
+    - Vehicle Attributes (Type, Arrival Time)
+    - Variable Discharge Rates (Trucks slower than Cars)
     """
     
-    def __init__(self, lane_id: str, arrival_rate_per_min: float = 10.0):
+    def __init__(self, lane_id: str, arrival_rate_per_min: float = 10.0, 
+                 vehicle_probs: Optional[Dict[str, float]] = None):
         """
         Args:
-            lane_id: Identifier for the lane (e.g., "North", "South")
-            arrival_rate_per_min: Lambda for Poisson distribution (vehicles/min)
+            lane_id: Identifier for the lane
+            arrival_rate_per_min: Lambda for Poisson distribution
+            vehicle_probs: Dictionary of vehicle type probabilities
         """
         self.lane_id = lane_id
         self.arrival_rate = arrival_rate_per_min
-        self.queue_length = 0
-        self.vehicles_passed = 0
-        self.last_update_time = time.time()
         
-        # Stochastic parameters (Probability of vehicle types)
-        self.vehicle_probs = {
+        # Simulation Logic
+        self.sim_time = 0.0
+        self.queue: List[Dict] = [] # List of {"type": str, "arrival_time": float}
+        self.vehicles_passed = 0
+        
+        # Configuration
+        self.vehicle_probs = vehicle_probs or {
             "Car": 0.5,
             "Bike": 0.3,
             "Bus": 0.1,
             "Truck": 0.1
         }
         
+        # Discharge Rates (seconds needed to clear intersection)
+        self.discharge_costs = {
+            "Car": 2.0,    # Takes 2s to clear
+            "Bike": 1.0,   # Fast
+            "Bus": 3.0,    # Slow
+            "Truck": 4.0   # Very Slow
+        }
+        
+    @property
+    def queue_length(self) -> int:
+        """Backward compatibility for JunctionManager"""
+        return len(self.queue)
+        
     def step(self, duration_seconds: float = 1.0) -> Dict:
         """
         Advance simulation by duration_seconds.
-        Returns state dictionary.
         """
+        self.sim_time += duration_seconds
+        
         # 1. Stochastic Arrival (Poisson Process)
-        # Expected new vehicles in this duration
         lam = (self.arrival_rate / 60.0) * duration_seconds
-        new_vehicles = np.random.poisson(lam)
+        new_vehicles_count = np.random.poisson(lam)
         
-        self.queue_length += new_vehicles
-        
-        # 2. Stochastic attributes for new vehicles (for visualization/stats)
         new_vehicle_types = []
-        if new_vehicles > 0:
+        if new_vehicles_count > 0:
             types = list(self.vehicle_probs.keys())
             probs = list(self.vehicle_probs.values())
-            new_vehicle_types = np.random.choice(types, size=new_vehicles, p=probs).tolist()
+            # Normalize probs just in case
+            prob_sum = sum(probs)
+            probs = [p/prob_sum for p in probs]
             
+            new_vehicle_types = np.random.choice(types, size=new_vehicles_count, p=probs).tolist()
+            
+            # Add to Queue
+            for v_type in new_vehicle_types:
+                self.queue.append({
+                    "type": v_type,
+                    "arrival_time": self.sim_time
+                })
+        
         return {
             "lane_id": self.lane_id,
-            "new_arrivals": new_vehicles,
-            "queue_length": self.queue_length,
+            "new_arrivals": new_vehicles_count,
+            "queue_length": len(self.queue),
             "new_types": new_vehicle_types
         }
 
-    def process_traffic(self, green_light_duration: float, discharge_rate_per_sec: float = 0.5):
+    def process_traffic(self, green_light_duration: float):
         """
-        Simulate traffic flowing out during Green light (Discrete Event: DEPARTURE)
+        Simulate traffic flowing out based on vehicle types.
+        Returns detailed stats.
         """
-        # Ensure at least 1 vehicle leaves if duration > 0.5s, avoiding int(0.5) = 0 stagnation
-        # Or use ceil/probabilistic. Simple fix: max(1, ...)
-        calculated_discharge = int(green_light_duration * discharge_rate_per_sec)
-        max_discharge = max(1, calculated_discharge) if green_light_duration >= 1.0 else calculated_discharge
+        time_remaining = green_light_duration
+        discharged_count = 0
+        discharged_types = []
+        total_wait_time = 0.0
         
-        discharged = min(self.queue_length, max_discharge)
-        self.queue_length -= discharged
-        self.vehicles_passed += discharged
+        # Process queue until time runs out or queue empty
+        while self.queue and time_remaining > 0:
+            next_vehicle = self.queue[0]
+            v_type = next_vehicle["type"]
+            cost = self.discharge_costs.get(v_type, 2.0)
+            
+            # Can this vehicle clear?
+            # We allow at least 1 vehicle if time > 0.5s to prevent lockups
+            if time_remaining >= cost or (discharged_count == 0 and time_remaining > 0.5):
+                # Discharge
+                v = self.queue.pop(0)
+                time_remaining -= cost
+                discharged_count += 1
+                discharged_types.append(v_type)
+                
+                # Stats
+                wait_time = self.sim_time - v["arrival_time"]
+                total_wait_time += wait_time
+            else:
+                break
+                
+        self.vehicles_passed += discharged_count
         
-        return discharged
+        return {
+            "discharged_count": discharged_count,
+            "discharged_types": discharged_types,
+            "avg_wait_time": (total_wait_time / discharged_count) if discharged_count > 0 else 0.0
+        }
