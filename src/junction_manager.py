@@ -63,11 +63,14 @@ class JunctionManager:
                     max_queue_val = lane.queue_length
                     max_queue_lane = lane_id
             
-            # Logic: Switch if MUST switch OR (Queue > Threshold AND current queue is low)
+            # Logic: Switch if MUST switch OR (Queue > Threshold AND current queue is low) OR (Current Queue is EMPTY)
             current_lane_queue = self.lanes[self.active_lane_id].queue_length
             
             trigger_reason = ""
-            if must_switch:
+            if current_lane_queue <= 0 and max_queue_val > 0:
+                # Immediate switch if empty and others waiting (Optimized Flow)
+                trigger_reason = f"LANE_EMPTY ({self.active_lane_id})"
+            elif must_switch:
                 trigger_reason = "MAX_TIME_EXPIRED"
             elif max_queue_val > self.queue_threshold and current_lane_queue < (max_queue_val / 2):
                 trigger_reason = f"QUEUE_SPIKE_DETECTED ({max_queue_lane}: {max_queue_val})"
