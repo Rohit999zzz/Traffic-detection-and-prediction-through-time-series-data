@@ -32,7 +32,7 @@ st.sidebar.markdown("Stochastic Parameters")
 for lane_id in junction.lanes:
     rate = st.sidebar.slider(
         f"Arrival Rate ({lane_id}) λ", 
-        min_value=1.0, 
+        min_value=0.0, 
         max_value=30.0, 
         value=float(junction.lanes[lane_id].arrival_rate),
         step=0.5,
