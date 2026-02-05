@@ -9,3 +9,5 @@ torch>=2.0.0
 pillow>=10.0.0
 tqdm>=4.65.0
 streamlit
+altair==4.2.2
+
